@@ -1,4 +1,3 @@
-# ************************************************************************************ #
 import torch, os, glob, pyiqa
 from argparse import ArgumentParser
 import numpy as np
@@ -8,68 +7,56 @@ from torchvision import transforms
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-LR_path = f'/media/ubuntu/58bd05a9-8d46-4354-9917-bf7d02de6f68/超分_红外2_小目标/2-原始的真实退化/yolov5/data/sirst/images/val_ours/original'
-SR_path = f'/media/ubuntu/58bd05a9-8d46-4354-9917-bf7d02de6f68/超分_红外2_小目标/2-原始的真实退化/师兄图像/无参考/锉刀/After' # Before   After
-
 parser = ArgumentParser()
-parser.add_argument("--SR_dir", type=str, default=SR_path)
+# parser.add_argument("--HR_dir", type=str, default=f"dataset/NPU_CS_UAV_IR_DATA/test/{dataname}/HR")
+parser.add_argument("--HR_dir", type=str, default=f"your GT path")
+parser.add_argument("--SR_dir", type=str, default=f"your SR path")
 args = parser.parse_args()
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"使用设备: {device}")
+device = torch.device("cuda")
 
-# 初始化评估指标
+psnr = pyiqa.create_metric("psnr", test_y_channel=True, color_space="ycbcr", device=device)
+ssim = pyiqa.create_metric("ssim", test_y_channel=True, color_space="ycbcr", device=device)
+lpips = pyiqa.create_metric("lpips", device=device)
+print('完成lpips')
+dists = pyiqa.create_metric("dists", device=device)
+print('完成dists')
+fid = pyiqa.create_metric("fid", device=device)
+print('完成fid')
 niqe = pyiqa.create_metric("niqe", device=device)
-print('完成niqe初始化')
+print('完成niqe')
 clipiqa = pyiqa.create_metric("clipiqa", device=device)
-print('完成clipiqa初始化')
+print('完成clipiqa')
 musiq = pyiqa.create_metric("musiq", device=device)
-print('完成musiq初始化')
+print('完成musiq')
 
-# 获取所有图像路径，确保只获取图像文件
-image_extensions = ['*.png', '*.jpg', '*.jpeg', '*.bmp', '*.tif']
-test_SR_paths = []
-for ext in image_extensions:
-    test_SR_paths.extend(glob.glob(os.path.join(args.SR_dir, ext)))
-test_SR_paths = sorted(test_SR_paths)
+test_SR_paths = list(sorted(glob.glob(os.path.join(args.SR_dir, "*"))))
+test_HR_paths = list(sorted(glob.glob(os.path.join(args.HR_dir, "*"))))
 
-# 确保有图像文件
-if not test_SR_paths:
-    raise ValueError(f"在目录 {args.SR_dir} 中未找到任何图像文件")
+metrics = {"psnr": [], "ssim": [], "lpips": [], "dists": [], "niqe": [], "musiq": [], "clipiqa": []}
 
-# 初始化指标字典（只包含实际使用的指标）
-metrics = {"niqe": [], "musiq": [], "clipiqa": []}
+for i, (SR_path, HR_path) in tqdm(enumerate(zip(test_SR_paths, test_HR_paths))):
+    SR = Image.open(SR_path).convert("RGB")
+    SR = transforms.ToTensor()(SR).to(device).unsqueeze(0)
+    HR = Image.open(HR_path).convert("RGB")
+    HR = transforms.ToTensor()(HR).to(device).unsqueeze(0)
+    metrics["psnr"].append(psnr(SR, HR).item())
+    metrics["ssim"].append(ssim(SR, HR).item())
+    metrics["lpips"].append(lpips(SR, HR).item())
+    metrics["dists"].append(dists(SR, HR).item())
+    metrics["niqe"].append(niqe(SR).item())
+    metrics["clipiqa"].append(clipiqa(SR).item())
+    metrics["musiq"].append(musiq(SR).item())
 
-# 处理每个图像
-for i, sr_path in tqdm(enumerate(test_SR_paths), total=len(test_SR_paths)):
-    try:
-        # 打开图像并转换为RGB
-        sr_img = Image.open(sr_path).convert("RGB")
-
-        # 转换为张量并添加批次维度
-        sr_tensor = transforms.ToTensor()(sr_img).to(device).unsqueeze(0)
-
-        # 计算指标
-        metrics["niqe"].append(niqe(sr_tensor).item())
-        metrics["clipiqa"].append(clipiqa(sr_tensor).item())
-        metrics["musiq"].append(musiq(sr_tensor).item())
-    except Exception as e:
-        print(f"处理图像 {sr_path} 时出错: {str(e)}")
-        continue
-
-# 计算平均值
 for k in metrics.keys():
-    if metrics[k]:  # 确保列表非空
-        metrics[k] = np.mean(metrics[k])
-    else:
-        metrics[k] = None
+    metrics[k] = np.mean(metrics[k])
 
-# 打印结果
+metrics["fid"] = fid(args.SR_dir, args.HR_dir)
+
 for k, v in metrics.items():
-    if v is not None:
-        if k == "niqe":
-            print(f"{k}: {v:.3g}")
-        else:
-            print(f"{k}: {v:.4g}")
+    if k == "niqe":
+        print(k, f"{v:.3g}")
+    elif k == "fid":
+        print(k, f"{v:.5g}")
     else:
-        print(f"{k}: 无有效数据")
+        print(k, f"{v:.4g}")
