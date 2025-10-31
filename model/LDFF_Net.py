@@ -75,10 +75,7 @@ class Mlp(nn.Module):
         x = x.permute(0, 3, 1, 2)  # 恢复 [B, C, H, W]
         return x
 
-'''
-借鉴[68]设计的小波变换
-'''
-# cA = F.interpolate(cA, scale_factor=2, mode='bicubic', align_corners=False)
+
 def dwt_init(x):
     x01 = x[:, :, 0::2, :]
     x02 = x[:, :, 1::2, :]
@@ -145,14 +142,7 @@ class IDWT(nn.Module):
     def forward(self, x_LL, x_HL, x_LH, x_HH):
         return idwt_init(x_LL, x_HL, x_LH, x_HH)
 
-'''
-(This is the official implementation of the AAAI2025 paper HS-FPN: High Frequency and Spatial Perception FPN for Tiny Object Detection.)
-HFP (High Frequency Perception Module)
-'''
-# ------------------------------------------------------------------#
-# Spatial Path of HFP
-# Only p1&p2 use dct to extract high_frequency response
-# ------------------------------------------------------------------#
+
 class DctSpatialInteraction(BaseModule):
     def __init__(self,
                  in_channels,
@@ -168,7 +158,6 @@ class DctSpatialInteraction(BaseModule):
                 *[ConvModule(in_channels, 1, kernel_size=1, bias=False)]
             )
 
-        # 新增：高频噪声过滤的可学习参数
         self.noise_threshold = nn.Parameter(torch.tensor(0.1))  # 控制高频抑制强度
 
     def forward(self, x):
@@ -179,7 +168,6 @@ class DctSpatialInteraction(BaseModule):
         idct = DCT.dct_2d(x, norm='ortho')
         weight = self._compute_weight(h0, w0, self.ratio).to(x.device)
 
-        # 新增：抑制过高频的噪声（基于阈值裁剪）
         idct = torch.where(torch.abs(idct) > self.noise_threshold, torch.tanh(idct), idct)
 
         weight = weight.view(1, h0, w0).expand_as(idct)
@@ -195,10 +183,6 @@ class DctSpatialInteraction(BaseModule):
         weight[:h0, :w0] = 0
         return weight
 
-# ------------------------------------------------------------------#
-# Channel Path of HFP
-# Only p1&p2 use dct to extract high_frequency response
-# ------------------------------------------------------------------#
 class DctChannelInteraction(BaseModule):
     def __init__(self,
                  in_channels,
@@ -241,8 +225,7 @@ class DctChannelInteraction(BaseModule):
         amaxp = torch.sum(self.gelu(amaxp), dim=[2, 3]).view(n, c, 1, 1)
         aavgp = torch.sum(self.gelu(aavgp), dim=[2, 3]).view(n, c, 1, 1)
 
-        # channel = torch.cat([self.channel1x1(aavgp), self.channel1x1(amaxp)], dim = 1) # TODO: The values of aavgp and amaxp appear to be on different scales. Add is a better choice instead of concate.
-        channel = self.channel1x1(amaxp) + self.channel1x1(aavgp)  # 2025 03 15 szc
+        channel = self.channel1x1(amaxp) + self.channel1x1(aavgp)
         return x * torch.sigmoid(self.channel2x1(channel))
 
     def _compute_weight(self, h, w, ratio):
@@ -252,12 +235,11 @@ class DctChannelInteraction(BaseModule):
         weight[:h0, :w0] = 0
         return weight
 
-# 输入为尺寸为[B,C,H,W]
 class HFP(BaseModule):
     def __init__(self,
                 in_channels,
-                ratio=(0.25, 0.25),           # None       (0.25, 0.25)
-                patch = (8,8),   #(8,8),(16,16)
+                ratio=(0.25, 0.25),
+                patch = (8,8),
                 isdct = True,
                 init_cfg=dict(
                     type='Xavier', layer='Conv2d', distribution='uniform')):
@@ -269,54 +251,46 @@ class HFP(BaseModule):
             nn.GroupNorm(in_channels, in_channels)]
             )
     def forward(self, x):
-        spatial = self.spatial(x) # output of spatial path
-        channel = self.channel(x) # output of channel path
+        spatial = self.spatial(x)
+        channel = self.channel(x)
         return self.out(spatial + channel)
 
 '''
 EMA注意力
 '''
-class EMA(nn.Module):  # 定义一个继承自 nn.Module 的 EMA 类
-    def __init__(self, channels, c2=None, factor=8):  # 构造函数，初始化对象
-        super(EMA, self).__init__()  # 调用父类的构造函数
-        self.groups = factor  # 定义组的数量为 factor，默认值为 32
-        assert channels // self.groups > 0  # 确保通道数可以被组数整除
-        self.softmax = nn.Softmax(-1)  # 定义 softmax 层，用于最后一个维度
-        self.agp = nn.AdaptiveAvgPool2d((1, 1))  # 定义自适应平均池化层，输出大小为 1x1
-        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))  # 定义自适应平均池化层，只在宽度上池化
-        self.pool_w = nn.AdaptiveAvgPool2d((1, None))  # 定义自适应平均池化层，只在高度上池化
-        self.gn = nn.GroupNorm(channels // self.groups, channels // self.groups)  # 定义组归一化层
+class EMA(nn.Module):
+    def __init__(self, channels, c2=None, factor=8):
+        super(EMA, self).__init__()
+        self.groups = factor
+        assert channels // self.groups > 0
+        self.softmax = nn.Softmax(-1)
+        self.agp = nn.AdaptiveAvgPool2d((1, 1))
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+        self.gn = nn.GroupNorm(channels // self.groups, channels // self.groups)
         self.conv1x1 = nn.Conv2d(channels // self.groups, channels // self.groups, kernel_size=1, stride=1,
-                                 padding=0)  # 定义 1x1 卷积层
+                                 padding=0)
         self.conv3x3 = nn.Conv2d(channels // self.groups, channels // self.groups, kernel_size=3, stride=1,
-                                 padding=1)  # 定义 3x3 卷积层
+                                 padding=1)
 
-    def forward(self, x):  # 定义前向传播函数
-        b, c, h, w = x.size()  # 获取输入张量的大小：批次、通道、高度和宽度
-        group_x = x.reshape(b * self.groups, -1, h, w)  # 将输入张量重新形状为 (b * 组数, c // 组数, 高度, 宽度)
-        x_h = self.pool_h(group_x)  # 在高度上进行池化
-        x_w = self.pool_w(group_x).permute(0, 1, 3, 2)  # 在宽度上进行池化并交换维度
-        hw = self.conv1x1(torch.cat([x_h, x_w], dim=2))  # 将池化结果拼接并通过 1x1 卷积层
-        x_h, x_w = torch.split(hw, [h, w], dim=2)  # 将卷积结果按高度和宽度分割
-        x1 = self.gn(group_x * x_h.sigmoid() * x_w.permute(0, 1, 3, 2).sigmoid())  # 进行组归一化，并结合高度和宽度的激活结果
-        x2 = self.conv3x3(group_x)  # 通过 3x3 卷积层
-        x11 = self.softmax(self.agp(x1).reshape(b * self.groups, -1, 1).permute(0, 2, 1))  # 对 x1 进行池化、形状变换、并应用 softmax
-        x12 = x2.reshape(b * self.groups, c // self.groups, -1)  # 将 x2 重新形状为 (b * 组数, c // 组数, 高度 * 宽度)
-        x21 = self.softmax(self.agp(x2).reshape(b * self.groups, -1, 1).permute(0, 2, 1))  # 对 x2 进行池化、形状变换、并应用 softmax
-        x22 = x1.reshape(b * self.groups, c // self.groups, -1)  # 将 x1 重新形状为 (b * 组数, c // 组数, 高度 * 宽度)
-        weights = (torch.matmul(x11, x12) + torch.matmul(x21, x22)).reshape(b * self.groups, 1, h, w)  # 计算权重
-        return (group_x * weights.sigmoid()).reshape(b, c, h, w)  # 应用权重并将形状恢复为原始大小
+    def forward(self, x):
+        b, c, h, w = x.size()
+        group_x = x.reshape(b * self.groups, -1, h, w)
+        x_h = self.pool_h(group_x)
+        x_w = self.pool_w(group_x).permute(0, 1, 3, 2)
+        hw = self.conv1x1(torch.cat([x_h, x_w], dim=2))
+        x_h, x_w = torch.split(hw, [h, w], dim=2)
+        x1 = self.gn(group_x * x_h.sigmoid() * x_w.permute(0, 1, 3, 2).sigmoid())
+        x2 = self.conv3x3(group_x)
+        x11 = self.softmax(self.agp(x1).reshape(b * self.groups, -1, 1).permute(0, 2, 1))
+        x12 = x2.reshape(b * self.groups, c // self.groups, -1)
+        x21 = self.softmax(self.agp(x2).reshape(b * self.groups, -1, 1).permute(0, 2, 1))
+        x22 = x1.reshape(b * self.groups, c // self.groups, -1)
+        weights = (torch.matmul(x11, x12) + torch.matmul(x21, x22)).reshape(b * self.groups, 1, h, w)
+        return (group_x * weights.sigmoid()).reshape(b, c, h, w)
 
-'''
-SS2D---参考[68]    ES2D
-'''
-# ********************************* SS2D ********************************* #
+
 class ChannelAttention(nn.Module):
-    """Channel attention used in RCAN.
-    Args:
-        num_feat (int): Channel number of intermediate features.
-        squeeze_factor (int): Channel squeeze factor. Default: 16.
-    """
 
     def __init__(self, num_feat, squeeze_factor=16):
         super(ChannelAttention, self).__init__()
@@ -333,7 +307,7 @@ class ChannelAttention(nn.Module):
 class CAB(nn.Module):
     def __init__(self, num_feat, is_light_sr= False, compress_ratio=3,squeeze_factor=30):
         super(CAB, self).__init__()
-        if is_light_sr: # a larger compression ratio is used for light-SR
+        if is_light_sr:
             compress_ratio = 6
         self.cab = nn.Sequential(
             nn.Conv2d(num_feat, num_feat // compress_ratio, 3, 1, 1),
@@ -344,7 +318,7 @@ class CAB(nn.Module):
 
     def forward(self, x):
         return self.cab(x)
-# 此SS2D用于block
+
 class SS2D(nn.Module):
     def __init__(
             self,
@@ -525,7 +499,7 @@ class SS2D(nn.Module):
         if self.dropout is not None:
             out = self.dropout(out)
         return out
-# 此SS2D用于单独使用
+
 class SS2D2(nn.Module):
     def __init__(
             self,
@@ -661,18 +635,18 @@ class SS2D2(nn.Module):
         L = H * W
         K = 4
         x_hwwh = torch.stack([x.view(B, -1, L), torch.transpose(x, dim0=2, dim1=3).contiguous().view(B, -1, L)], dim=1).view(B, 2, -1, L)
-        xs = torch.cat([x_hwwh, torch.flip(x_hwwh, dims=[-1])], dim=1) # (1, 4, 192, 3136)
+        xs = torch.cat([x_hwwh, torch.flip(x_hwwh, dims=[-1])], dim=1)
 
         x_dbl = torch.einsum("b k d l, k c d -> b k c l", xs.view(B, K, -1, L), self.x_proj_weight)
         dts, Bs, Cs = torch.split(x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=2)
         dts = torch.einsum("b k r l, k d r -> b k d l", dts.view(B, K, -1, L), self.dt_projs_weight)
         xs = xs.float().view(B, -1, L)
-        dts = dts.contiguous().float().view(B, -1, L) # (b, k * d, l)
+        dts = dts.contiguous().float().view(B, -1, L)
         Bs = Bs.float().view(B, K, -1, L)
-        Cs = Cs.float().view(B, K, -1, L) # (b, k, d_state, l)
+        Cs = Cs.float().view(B, K, -1, L)
         Ds = self.Ds.float().view(-1)
         As = -torch.exp(self.A_logs.float()).view(-1, self.d_state)
-        dt_projs_bias = self.dt_projs_bias.float().view(-1) # (k * d)
+        dt_projs_bias = self.dt_projs_bias.float().view(-1)
         out_y = self.selective_scan(
             xs, dts,
             As, Bs, Cs, Ds, z=None,
@@ -689,7 +663,7 @@ class SS2D2(nn.Module):
         return out_y[:, 0], inv_y[:, 0], wh_y, invwh_y
 
     def forward(self, x: torch.Tensor, **kwargs):
-        x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
+        x = x.permute(0, 2, 3, 1)
         B, H, W, C = x.shape
         xz = self.in_proj(x)
         x, z = xz.chunk(2, dim=-1)
@@ -705,51 +679,8 @@ class SS2D2(nn.Module):
         out = self.out_proj(y)
         if self.dropout is not None:
             out = self.dropout(out)
-        out = out.permute(0, 3, 1, 2)  # 恢复 [B, C, H, W]
+        out = out.permute(0, 3, 1, 2)
         return out
-# class VSSBlock(nn.Module):
-#     def __init__(
-#             self,
-#             hidden_dim: int = 0,
-#             drop_path: float = 0,
-#             norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
-#             attn_drop_rate: float = 0,
-#             d_state: int = 16,
-#             expand: float = 2.,
-#             is_light_sr: bool = False,
-#             **kwargs,
-#     ):
-#         super().__init__()
-#         self.ln_1 = norm_layer(hidden_dim)
-#         self.self_attention = SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs)
-#         self.drop_path = DropPath(drop_path)
-#         self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
-#         self.spatial_scale = None  # 延迟初始化
-#         self.conv_blk = CAB(hidden_dim,is_light_sr)
-#         self.ln_2 = nn.LayerNorm(hidden_dim)
-#         self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
-#         self.spatial_scale2 = None  # 延迟初始化
-#
-#     def forward(self, input):
-#         # Input shape: [B, C, H, W]
-#         B, C, H, W = input.shape
-#         input = input.permute(0, 2, 3, 1).contiguous()  # [B, H, W, C]
-#
-#         # 如果是第一次运行，初始化 spatial_scale
-#         if self.spatial_scale is None:
-#             self.spatial_scale = nn.Parameter(torch.ones(H, W))  # [H, W]
-#             self.register_parameter("spatial_scale", self.spatial_scale)  # 注册为可学习参数
-#         # 如果是第一次运行，初始化 spatial_scale
-#         if self.spatial_scale2 is None:
-#             self.spatial_scale2 = nn.Parameter(torch.ones(H, W))  # [H, W]
-#             self.register_parameter("spatial_scale", self.spatial_scale2)  # 注册为可学习参数
-#
-#         x = self.ln_1(input)
-#         x = input*self.skip_scale + self.drop_path(self.self_attention(x))
-#         x = x*self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
-#         # Convert back to [B, C, H, W]
-#         x = x.permute(0, 3, 1, 2).contiguous()
-#         return x
 
 class VSSBlock(nn.Module):
     def __init__(
@@ -767,167 +698,115 @@ class VSSBlock(nn.Module):
         self.self_attention = SS2D(d_model=hidden_dim, d_state=d_state, expand=expand, dropout=attn_drop_rate, **kwargs)
         self.drop_path = DropPath(drop_path)
         self.skip_scale = nn.Parameter(torch.ones(hidden_dim))
-        self.spatial_scale = None  # 延迟初始化
+        self.spatial_scale = None
         self.conv_blk = CAB(hidden_dim, is_light_sr)
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
-        self.spatial_scale2 = None  # 延迟初始化
+        self.spatial_scale2 = None
 
     def forward(self, input):
-        # Input shape: [B, C, H, W]
         B, C, H, W = input.shape
-        input = input.permute(0, 2, 3, 1).contiguous()  # [B, H, W, C]
+        input = input.permute(0, 2, 3, 1).contiguous()
 
-        # 初始化 spatial_scale（第一次运行时）
         if self.spatial_scale is None:
-            self.spatial_scale = nn.Parameter(torch.ones(H, W))  # [H, W]
-            self.register_parameter("spatial_scale", self.spatial_scale)  # 正确注册第一个参数
+            self.spatial_scale = nn.Parameter(torch.ones(H, W))
+            self.register_parameter("spatial_scale", self.spatial_scale)
 
-        # 初始化 spatial_scale2（第一次运行时）
         if self.spatial_scale2 is None:
-            self.spatial_scale2 = nn.Parameter(torch.ones(H, W))  # [H, W]
-            # 关键修复：使用不同的名称"spatial_scale2"注册第二个参数
+            self.spatial_scale2 = nn.Parameter(torch.ones(H, W))
             self.register_parameter("spatial_scale2", self.spatial_scale2)
 
         x = self.ln_1(input)
         x = input * self.skip_scale + self.drop_path(self.self_attention(x))
         x = x * self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3,
                                                                                                         1).contiguous()
-        # Convert back to [B, C, H, W]
         x = x.permute(0, 3, 1, 2).contiguous()
         return x
 
-    # 重写参数加载逻辑，处理延迟初始化的参数
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
-        # 检查需要动态创建的参数是否在state_dict中
         spatial_scale_key = prefix + "spatial_scale"
         spatial_scale2_key = prefix + "spatial_scale2"
 
-        # 如果state_dict中有spatial_scale，但当前模块中还没有，则创建它
         if spatial_scale_key in state_dict and self.spatial_scale is None:
-            # 从state_dict中获取参数形状和值
             scale_value = state_dict[spatial_scale_key]
             self.spatial_scale = nn.Parameter(scale_value)
             self.register_parameter("spatial_scale", self.spatial_scale)
 
-        # 处理spatial_scale2
         if spatial_scale2_key in state_dict and self.spatial_scale2 is None:
             scale2_value = state_dict[spatial_scale2_key]
             self.spatial_scale2 = nn.Parameter(scale2_value)
             self.register_parameter("spatial_scale2", self.spatial_scale2)
 
-        # 调用父类方法完成剩余参数加载
         super()._load_from_state_dict(
             state_dict, prefix, local_metadata, strict,
             missing_keys, unexpected_keys, error_msgs
         )
 
-
-# *********************************** 下面是自己定义的模块CRFFM和STFRM *********************************** #
 class STFRM(nn.Module):
     def __init__(self, dim, mlp_ratio=4.):
-        """
-        Args:
-            dim (int): 输入通道数 C
-            mlp_ratio (float): MLP隐藏层扩展比例（默认4）
-            drop (float): Dropout率
-        """
+
         super().__init__()
 
-        # MLP（通道维处理，保持空间结构）
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(
             in_features=dim,
             hidden_features=mlp_hidden_dim,
             out_features=dim
         )
-        # 您的HFP模块（假设输入输出同尺寸）
         self.hfp = HFP(dim)
-        # GELU激活
         self.act = nn.GELU()
-        # 您的EMA模块（假设输入输出同尺寸）
         self.ema1 = EMA(dim)
 
-        self.vss = VSSBlock(dim)  # VSSBlock   SS2D2
+        self.vss = VSSBlock(dim)
         self.ema2 = EMA(dim)
 
-        # 新增：特征融合注意力（筛选有效特征）
         self.fusion_attn = nn.Sequential(
-            conv_layer(2*dim, dim, kernel_size=1),  # 融合x1和x2的特征
+            conv_layer(2*dim, dim, kernel_size=1),
             nn.Sigmoid()
         )
 
 
     def forward(self, x):
-        """
-        输入: [B, C, H, W]
-        输出: [B, C, H, W]
-        """
-        # --- 第一次处理流 ---
-        # 层归一化（需将通道维放到最后）
+
         x1 = self.hfp(x)
-        x1 = self.mlp(x1)  # 假设您的Mlp已支持4D输入（见前文方案1）
+        x1 = self.mlp(x1)
         x1 = self.act(x1)
         x1 = self.ema1(x1)
         x2 = self.vss(x)
         x2 = self.ema2(x2)
 
-        # 改进：通过注意力加权融合，而非直接相加
         fusion_weight = self.fusion_attn(torch.cat([x1, x2], dim=1))
-        out = x1 * fusion_weight + x2 * (1 - fusion_weight)  # 动态选择更优特征
+        out = x1 * fusion_weight + x2 * (1 - fusion_weight)
         return out
 
 class CRFFM(nn.Module):
     def __init__(self, dim):
-        """
-        Args:
-            dim (int): 输入总通道数（需被4整除）
-            A_module (nn.Module): 您定义的A模块（若未提供则默认使用STFRM）
-        """
         super().__init__()
 
-        # 初始化4个A模块（可共享权重或独立）
         self.A1 = STFRM(dim)
 
 
     def forward(self, x):
-        """
-        输入: [B, C, H, W]
-        输出: [B, C, H, W]
-        """
 
-
-        # 级联处理
         x = self.A1(x)  # x1 = A1(x1)
 
         return x
 
 class DFE(nn.Module):
     def __init__(self, dim, num):
-        """
-        SFEM模块 - 由n个CRFFM模块串联组成的特征提取模块
-
-        参数:
-            num: 串联的CRFFM模块数量
-            dim: 每个CRFFM的输入通道数
-        """
         super(DFE, self).__init__()
 
-        # 创建n个CRFFM模块的序列
         self.crffm_blocks = nn.Sequential()
         for i in range(num):
-            # 初始化每个CRFFM模块（假设CRFFM是你已经定义好的类）
             crffm = CRFFM(dim)
             self.crffm_blocks.add_module(f'crffm_{i}', crffm)
 
-        # 新增：残差缩放系数（稳定训练）
-        self.res_scale = nn.Parameter(torch.tensor(0.1))  # 初始值0.1，可学习
+        self.res_scale = nn.Parameter(torch.tensor(0.1))
 
     def forward(self, x):
         out = self.res_scale * self.crffm_blocks(x) + x
         return out
 
-# 定义的OutBlock---轻量级
 class OutBlock_lightweight(nn.Module):
     def __init__(self, in_channel, up_scale = 4):
         super(OutBlock_lightweight, self).__init__()
@@ -944,7 +823,6 @@ class OutBlock_lightweight2(nn.Module):
     def __init__(self, in_channel, up_scale = 4):
         super(OutBlock_lightweight2, self).__init__()
         self.up_scale = up_scale
-        # 新增：上采样前的平滑滤波（抑制噪声）
         self.denoise_conv = nn.Sequential(
             conv_layer(in_channel, in_channel, kernel_size=3, groups=in_channel),  # 深度可分离卷积平滑
             nn.GELU()
@@ -964,21 +842,12 @@ class OutBlock_lightweight2(nn.Module):
                 conv_layer(in_channel//2, 3, kernel_size=3)
             )
     def forward(self, x):
-        x = self.denoise_conv(x)  # 上采样前先平滑噪声
+        x = self.denoise_conv(x)
         return self.main(x)
 
-
-
-'''
-MYMODEL
-最终的模型
-链式残差特征融合模块---Chained Residual Feature Fusion Module，CRFFM
-小目标特征识别模块---Small target feature recognition module，STFRM
-'''
 class MYMODEL(nn.Module):
     def __init__(self, up_scale=2):
         super(MYMODEL, self).__init__()
-        # 设置基础通道数
         self.up_scale = up_scale
         self.basechannles = 64
         self.modulenum = 4

@@ -1,4 +1,4 @@
-dataroot_gt: 'dataset/SIRST/train'
+dataroot_gt: 'your train dataset path'
 
 scale: 2
 

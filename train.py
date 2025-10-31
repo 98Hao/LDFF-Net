@@ -21,9 +21,6 @@ def main(mymodel, args, config):
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(args.log_dir, exist_ok=True)
 
-
-    fft_loss = FFTLoss().to(device)
-
     print("start training...")
     for epoch_i in range(1, epoch + 1):
         start_time = time.time()
@@ -39,16 +36,12 @@ def main(mymodel, args, config):
                 HR = HR.to(device)
                 optimizer.zero_grad()
                 SR = mymodel(LR)
-                # 计算损失
+
                 loss_l1 = l1_loss(HR, SR)
-                # loss_lpips = lpips_loss(HR, SR,device=device)
-                loss_wav = wavelet_loss(HR, SR)   # 权重0.5
-                # loss_fft = fft_loss(HR, SR)     # 权重0.05
-                loss =  loss_l1 + 0.5*loss_wav # + 1e-6 * tv_loss(SR)# + 1e-6 * tv_loss(output) + 0.5*loss_wav
+                loss_wav = wavelet_loss(HR, SR)
+                loss =  loss_l1 + 0.5*loss_wav
 
                 loss_avg+=loss
-                # loss_L1 += loss_l1
-                # loss_WAV+=loss_wav
 
                 loss.backward()
                 optimizer.step()
@@ -77,16 +70,14 @@ from tqdm import tqdm
 from omegaconf import OmegaConf
 from dataset import RealESRGANDataset, RealESRGANDegrader
 from torchvision import transforms
-from loss_utils import l1_loss,lpips_loss,wavelet_loss, tv_loss
-from model.MSLRSR.losses.losses import FFTLoss # 权重0.05
+from loss_utils import l1_loss,wavelet_loss
 
 if __name__ == '__main__':
-    # 定义模型
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # 首先设置GPU设备
-    cudnn.benchmark = True  # 对卷积进行加速
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    cudnn.benchmark = True
 
-    model_name = "LDFF_Net"                        # *************** 修改 *************** #
-    from model.LDFF_Net import MYMODEL            # *************** 修改 *************** #
+    model_name = "LDFF_Net"
+    from model.LDFF_Net import MYMODEL
     mymodel = MYMODEL(up_scale=4)
     mymodel = mymodel.to(device)
 

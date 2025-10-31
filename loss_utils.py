@@ -1,13 +1,3 @@
-#
-# Copyright (C) 2023, Inria
-# GRAPHDECO research group, https://team.inria.fr/graphdeco
-# All rights reserved.
-#
-# This software is free for non-commercial, research and evaluation use 
-# under the terms of the LICENSE.md file.
-#
-# For inquiries contact  george.drettakis@inria.fr
-#
 
 import torch
 import torch.nn.functional as F
@@ -63,68 +53,31 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
         return ssim_map.mean(1).mean(1).mean(1)
 
 
-import lpips  # 导入LPIPS库
+import lpips
 def lpips_loss(img1, img2, net='alex', device='cuda'):
-    """
-    LPIPS（感知相似性）损失函数
 
-    参数:
-        img1 (torch.Tensor): 输入图像1，形状为 [N, C, H, W]，范围建议 [0, 1] 或 [-1, 1]
-        img2 (torch.Tensor): 输入图像2，形状与 img1 相同
-        net (str): 使用的网络 backbone，可选 'alex' | 'vgg' | 'squeeze'
-        device (str): 计算设备，如 'cuda' 或 'cpu'
-
-    返回:
-        torch.Tensor: 标量损失值
-    """
-    # 初始化LPIPS模型（单例模式，避免重复加载）
     loss_fn = lpips.LPIPS(net=net, verbose=False).to(device)
 
-    # 确保输入范围在[-1, 1]（LPIPS的默认要求）
     if img1.max() > 1.0:
-        img1 = img1 / 127.5 - 1.0  # 假设输入是[0, 255]
+        img1 = img1 / 127.5 - 1.0
     if img2.max() > 1.0:
         img2 = img2 / 127.5 - 1.0
 
-    # 计算LPIPS
     return loss_fn(img1, img2).mean()
 
 
-from model.ours2 import dwt_init
+from model.LDFF_Net import dwt_init
 def wavelet_loss(pred, target, mode='l1', weight_LL=1.0, weight_High=1.0):
-    """
-    小波域损失函数（函数式实现）
-
-    参数:
-        pred (Tensor): 预测图像 [N,C,H,W]
-        target (Tensor): 目标图像 [N,C,H,W]
-        mode (str): 'l1' 或 'l2' 损失
-        weight_LL (float): 低频分量权重
-        weight_High (float): 高频分量权重
-
-    返回:
-        Tensor: 标量损失值
-    """
-    # 小波分解
     pred_LL, pred_HL, pred_LH, pred_HH = dwt_init(pred)  # 直接调用你的 dwt_init 函数
     target_LL, target_HL, target_LH, target_HH = dwt_init(target)
 
-    # 选择损失类型
     loss_fn = F.l1_loss if mode == 'l1' else F.mse_loss
 
-    # 计算各子带损失
     loss_LL = loss_fn(pred_LL, target_LL)
     loss_HL = loss_fn(pred_HL, target_HL)
     loss_LH = loss_fn(pred_LH, target_LH)
     loss_HH = loss_fn(pred_HH, target_HH)
 
-    # 加权合并
     return weight_LL * loss_LL + weight_High * (loss_HL + loss_LH + loss_HH)
 
-
-def tv_loss(x, beta=0.5):
-    """计算总变分损失，抑制噪声"""
-    dh = torch.pow(x[:, :, 1:, :] - x[:, :, :-1, :], 2).sum()
-    dw = torch.pow(x[:, :, :, 1:] - x[:, :, :, :-1], 2).sum()
-    return (dh + dw) ** beta
 

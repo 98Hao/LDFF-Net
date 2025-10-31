@@ -381,16 +381,3 @@ class MSLR(nn.Module):
         output = self.upsampler(out_lr)
         return output
 
-# if __name__ == '__main__':
-#     #############Test Model Complexity #############
-#     from fvcore.nn import flop_count_table, FlopCountAnalysis, ActivationCountAnalysis
-#
-#     x = torch.randn(1, 3, 320, 180)
-#
-#     model = MSLR(upscale=2)
-#
-#     print(model)
-#     print(flop_count_table(FlopCountAnalysis(model, x), activations=ActivationCountAnalysis(model, x)))
-#     output = model(x)
-#     print(output.shape)
-#     print(f'params: {sum(map(lambda x: x.numel(), model.parameters()))}')
