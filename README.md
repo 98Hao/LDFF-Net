@@ -2,7 +2,7 @@
 ```
 python train.py
 ```
-# nihao 
+
 ## Test
 ```
 python test.py
