@@ -10,9 +10,9 @@ from torch.backends import cudnn
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # 首先设置GPU设备
-cudnn.benchmark = True  # 对卷积进行加速
-model_name = "LDFF_Net"                              # *************** 修改 *************** #
-from model.LDFF_Net import MYMODEL                  # *************** 修改 *************** #
+cudnn.benchmark = True
+model_name = "LDFF_Net"
+from model.LDFF_Net import MYMODEL
 mymodel = MYMODEL(up_scale=4)
 mymodel = mymodel.to(device)
 
