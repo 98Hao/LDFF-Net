@@ -18,6 +18,6 @@ Modify the paths in lines 12 and 13 to your GT and SR directories
 
 ## Acknowledgements
 
-This code is built on [MSLRSR](https://github.com/clelevo/MSLRSR) and [HIIF](https://github.com/YuxuanJJ/HIIF). We thank the authors for sharing their codes.
+This code is built on [MSLRSR](https://github.com/clelevo/MSLRSR), [HIIF](https://github.com/YuxuanJJ/HIIF) and [HS-FPN](https://github.com/ShiZican/HS-FPN). We thank the authors for sharing their codes.
 
 ---
