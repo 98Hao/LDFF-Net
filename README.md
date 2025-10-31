@@ -3,10 +3,10 @@
 python train.py
 Modify the training dataset path in the first line of the config.yml file. The folder structure is as follows:
 
----your train dataset path
-     ---HR # Only the GT images are required; the LR images will be generated automatically by the trainer according to the parameters specified in the config.yml file.
-          ---000.png
-          ---001.png
+# Only the GT images are required; the LR images will be generated automatically by the trainer according to the parameters specified in the config.yml file.
+---your train dataset path/HR
+     ---000.png
+     ---001.png
 ```
 
 ## Test
