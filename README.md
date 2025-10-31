@@ -2,18 +2,18 @@
 ```
 python train.py
 ```
-
+# nihao 
 ## Test
 ```
 python test.py
-Modify the path in line 22 to the low-resolution images that need to be tested
-Modify the path in line 23 to specify the directory for saving the test results
+Modify the path in line 20 to the low-resolution images that need to be tested
+Modify the path in line 21 to specify the directory for saving the test results
 ```
 
 ## Evaluation
 ```
 python evaluation.py
-Modify the paths in lines 12 and 13 to your GT and SR directories
+Modify the paths in lines 11 and 12 to your GT and SR directories
 ```
 
 ## Acknowledgements
